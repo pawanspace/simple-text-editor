@@ -2,7 +2,7 @@
 CC = gcc
 
 # compiler flags
-CFLAGS = -Wall -Wextra -pedantic -std=c99
+CFLAGS =  -g3 -O0 -fno-omit-frame-pointer -Wall -Wextra -pedantic -std=c99
 
 # Output name
 TARGET = kilo

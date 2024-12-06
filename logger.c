@@ -20,6 +20,7 @@ char* get_date() {
 
 void info(char *message, Logger *logger) {
   fprintf(logger->logfile, "[INFO][%s] %s\n", get_date(), message);
+  flush(logger);
 }
 void error(char *message, Logger *logger) {
   fprintf(logger->logfile, "[ERROR][%s] %s\n", get_date(), message);

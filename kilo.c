@@ -9,10 +9,15 @@
 #include "logger.h"
 #include <time.h>
 #include <stdarg.h>
+#include <fcntl.h>
 
-/*** defines ***/
+/*** defines for kilo editor***/
 #define KILO_VERSION "0.0.1"
 #define KILO_TAB_STOP 8
+#define KILO_QUIT_TIMES 3 // requires user to quit 3 more times in order to quit without saving the changes.
+
+/*** prototypes ***/
+void editorSetStatusMessage(const char *fmt, ...);
 
 // The CTRL_KEY macro bitwise-ANDs a character with the value 00011111, in binary.
 #define CTRL_KEY(k) ((k) & 0x1f)
@@ -41,6 +46,7 @@ struct editorConfig {
   char *filename;
   char statusmsg[80];
   time_t statusmsg_time;
+  int dirty;
 };
 
 // editor keys mapped to numbers to avoid conflict with actual characters
@@ -248,10 +254,9 @@ int getWindowSize(int *rows, int *cols) {
 void editorUpdateRow(erow *row) {
   // count total number of tabs
   int tabs;
-  for (int i; i > row->size; i++) {
+  for (int i = 0; i < row->size; i++) {
     if (row->chars[i] == '\t') tabs++;
   }
-
   free(row->render);
   /* reserve space for tabs as well. Each tab takes 8 char of space.
      multplying with 7 because 1 space is already covered by size
@@ -288,6 +293,7 @@ void editorAppendRow(char *s, size_t len) {
   E.row[at].render = NULL;
   editorUpdateRow(&E.row[at]);
   E.numrows++;
+  E.dirty++;
 }
 
 
@@ -307,6 +313,7 @@ void editorRowInsertChar(erow *row, int at, int c) {
   row->size++; // increment row size
   row->chars[at] = c; // insert char
   editorUpdateRow(row); // rerender row
+  E.dirty++;
 }
 
 /*** editor operations ***/
@@ -320,9 +327,51 @@ void editorInsertChar(int c) {
   E.cx++; // move cursor to next position on x
 }
 
+void editorRowDelChar(erow *row, int at) {
+  if (at < 0 || at >= row->size)
+    return;
+  memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
+  row->size--;
+  editorUpdateRow(row);
+  E.dirty++;
+}
 
+void editorDeleteChar() {
+  if (E.cy == E.numrows)
+    return;
+  erow *row = &E.row[E.cy];
+  if (E.cx > 0) {
+    editorRowDelChar(row, E.cx - 1);
+    E.cx--;
+  }
+}
 
 /*** file i/o ***/
+
+char *editorRowsToString(int *buflen) {
+  int totlen = 0;
+  int j;
+  /* calc total length of final string by adding len of each row + 1 for each new line*/
+  for (j = 0; j < E.numrows; j++) {
+    totlen += E.row[j].size + 1;
+  }
+  *buflen = totlen;
+  // allocate memory for buffer
+  char *buf = malloc(totlen);
+  // pointer to keep the location of next memory for copy
+  // initially points at the start of buffer.
+  char *p = buf;
+  for (j = 0; j < E.numrows; j++) {
+    memcpy(p, E.row[j].chars, E.row[j].size);
+    p += E.row[j].size; // move the pointer by size of the row
+    *p = '\n';          // add new line
+    p++; // increment pointer for new line
+  }
+
+  return buf;
+}
+
+
 void editorOpen(char *filename) {
   free(E.filename);
   E.filename = strdup(filename);
@@ -346,6 +395,51 @@ void editorOpen(char *filename) {
   }
   free(line);
   fclose(fp);
+  E.dirty = 0;
+}
+
+void editorSave() {
+  if (E.filename == NULL)
+    return;
+  int len;
+  char *buf = editorRowsToString(&len);
+  // open a file to read and write, create if it doesn't exist, 0644 is the permission on file.
+  int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
+  if (fd != -1) {
+    /*
+      truncate file till len
+      ftruncate() sets the file’s size to the specified length. If the file is
+      larger than that, it will cut off any data at the end of the file to make
+      it that length. If the file is shorter, it will add 0 bytes at the end to
+      make it that length.
+
+      The normal way to overwrite a file is to pass the O_TRUNC flag to open(),
+      which truncates the file completely, making it an empty file, before
+      writing the new data into it. By truncating the file ourselves to the same
+      length as the data we are planning to write into it, we are making the
+      whole overwriting operation a little bit safer in =case the ftruncate()
+      call succeeds but the write() call fails. In that case, the file would
+      still contain most of the data it had before. But if the file was
+      truncated completely by the open() call and then the write() failed, you’d
+      end up with all of your data lost.
+
+      More advanced editors will write to a new, temporary file, and then rename
+      that file to the actual file the user wants to overwrite, and they’ll
+      carefully check for errors through the whole process.
+    */
+    if (ftruncate(fd, len) != -1) {
+      if (write(fd, buf, len) == len) {
+        close(fd);
+        free(buf);
+        editorSetStatusMessage("%d bytes written to disk", len);
+        E.dirty = 0;
+        return;
+      }
+    }
+    close(fd);
+  }
+  free(buf);
+  editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
 }
 
 
@@ -426,6 +520,7 @@ void editorMoveCursor(int key) {
 }
 
 void editorProcessKeypress() {
+  static int quit_times = KILO_QUIT_TIMES;
   int c = editorReadKey();
 
   switch (c) {
@@ -434,10 +529,21 @@ void editorProcessKeypress() {
     break;
   // quit on ctrl + q
   case CTRL_KEY('q'):
-      write(STDOUT_FILENO, "\x1b[2J", 4);
-      write(STDOUT_FILENO, "\x1b[H", 3);
-      exit(0);
-      break;
+    if (E.dirty && quit_times > 0) {
+      editorSetStatusMessage("WARNING!!! File has unsaved changes. Press "
+                             "Ctrl-Q %d more times to quit.",
+                             quit_times);
+      quit_times--;
+      return;
+    }
+    write(STDOUT_FILENO, "\x1b[2J", 4);
+    write(STDOUT_FILENO, "\x1b[H", 3);
+    exit(0);
+    break;
+
+  case CTRL_KEY('s'):
+    editorSave();
+    break;
 
  /***
      We also handle the Ctrl-H key combination, which sends the control code
@@ -451,7 +557,10 @@ void editorProcessKeypress() {
   case BACKSPACE:
   case CTRL_KEY('h'):
   case DEL_KEY:
-    /* TODO */
+    if (c == DEL_KEY) {
+        editorMoveCursor(ARROW_RIGHT);
+    }
+    editorDeleteChar();
     break;
 
   // move to beginning of the line
@@ -497,6 +606,8 @@ void editorProcessKeypress() {
     editorInsertChar(c);
     break;
   }
+  // reset if any other key is pressed
+  quit_times = KILO_QUIT_TIMES;
 }
 
 /*** output ***/
@@ -603,8 +714,8 @@ void editorDrawStatusBar(struct abuf *ab) {
 
   char status[80], rstatus[80];
   /* show file name and total rows */
-  int len = snprintf(status, sizeof(status), "%20s - %d lines",
-                     E.filename ? E.filename : "[No Name]", E.numrows);
+  int len = snprintf(status, sizeof(status), "%20s - %d lines %s",
+                     E.filename ? E.filename : "[No Name]", E.numrows, E.dirty ? "(modified)" : "");
 
   /* show current row / total rows */
   int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", E.cy + 1, E.numrows);
@@ -677,6 +788,7 @@ void initEditor() {
   E.cx = 0;
   E.rx = 0;
   E.cy = 0;
+  E.dirty = 0;
   E.numrows = 0;
   E.rowoff = 0;
   E.coloff = 0;
