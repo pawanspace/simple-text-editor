@@ -18,22 +18,49 @@ char* get_date() {
     return date;
 }
 
-void info(char *message, Logger *logger) {
-  fprintf(logger->logfile, "[INFO][%s] %s\n", get_date(), message);
-  flush(logger);
+
+void info(Logger *logger, const char *fmt, ...) {
+    if (!logger || !logger->logfile) return;    
+    fprintf(logger->logfile, "[%s] [INFO] ", get_date());
+   
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(logger->logfile, fmt, args);
+    va_end(args);
+    
+    fprintf(logger->logfile, "\n");
 }
-void error(char *message, Logger *logger) {
-  fprintf(logger->logfile, "[ERROR][%s] %s\n", get_date(), message);
+
+void error(Logger *logger, const char *fmt, ...) {
+    if (!logger || !logger->logfile) return;
+    fprintf(logger->logfile, "[%s] [ERROR] ", get_date());
+    
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(logger->logfile, fmt, args);
+    va_end(args);
+    
+    fprintf(logger->logfile, "\n");
 }
-void warning(char *message, Logger *logger) {
-  fprintf(logger->logfile, "[WARN][%s] %s\n", get_date(), message);
+
+void warning(Logger *logger, const char *fmt, ...) {
+    if (!logger || !logger->logfile) return;
+    fprintf(logger->logfile, "[%s] [WARNING] ", get_date());
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(logger->logfile, fmt, args);
+    va_end(args);
+    
+    fprintf(logger->logfile, "\n");
 }
 
 void flush(Logger *logger) {
+  if (!logger || !logger->logfile) return;   
   fflush(logger->logfile);
 }
 
 void stop(Logger *logger) {
+  if (!logger || !logger->logfile) return;   
   fclose(logger->logfile);
   free(logger);
 }

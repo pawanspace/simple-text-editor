@@ -3,15 +3,16 @@
 #import <stdio.h>
 #import <stdlib.h>
 #include <time.h>
+#include <stdarg.h>  // Added for variable arguments
 
 typedef struct {
   FILE *logfile;
 } Logger;
 
 Logger* createLogger();
-void info(char *message, Logger *logger);
-void error(char *message, Logger *logger);
-void warning(char *message, Logger *logger);
+void info(Logger *logger, const char *fmt, ...);
+void error(Logger *logger, const char *fmt, ...);
+void warning(Logger *logger, const char *fmt, ...);
 void flush(Logger *logger);
 void stop(Logger *logger);
 #endif

@@ -476,9 +476,7 @@ int editorRowCxToRx(erow *row, int cx) {
       int current_rx = rx;
       // this handles the case when u r in the middle of the tab
       rx += (KILO_TAB_STOP - 1)  - (rx % KILO_TAB_STOP);
-      char message[100];
-      snprintf(message, sizeof(message), "Encountered tab at rx %d and now rx is %d", current_rx, rx);
-      info(message, E.logger);
+      info(E.logger, "Encountered tab at rx %d and now rx is %d", current_rx, rx);
     }
     rx++;
   }
